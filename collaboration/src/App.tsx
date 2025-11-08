@@ -15,7 +15,7 @@ import {
   useMemo,
   useState,
 } from 'react'
-import { UserMinus, Clock, ShieldAlert, Download, Timer } from 'lucide-react'
+import { UserMinus, Clock, ShieldAlert, Download, Timer, Trophy, TrendingUp, CheckCircle2 } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -458,6 +458,21 @@ function RoomScreen() {
     if (!ideas.length) return null
     return [...ideas].sort((a, b) => b.votes.length - a.votes.length)[0]
   }, [ideas])
+
+  const votingStats = useMemo(() => {
+    const totalVotes = ideas.reduce((sum, idea) => sum + idea.votes.length, 0)
+    const sortedIdeas = [...ideas].sort((a, b) => b.votes.length - a.votes.length)
+    const maxVotes = sortedIdeas[0]?.votes.length || 0
+    
+    return {
+      totalVotes,
+      sortedIdeas,
+      maxVotes,
+      participantVoteCount: ideas.filter(idea => 
+        idea.votes.includes(session?.participantId ?? '')
+      ).length,
+    }
+  }, [ideas, session?.participantId])
 
   useEffect(() => {
     if (room?.adminName) {
@@ -986,19 +1001,15 @@ function RoomScreen() {
                               {idea.authorName} · {new Date(idea.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                             </p>
                           </div>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="gap-2 text-primary"
-                            disabled={phase !== 'ended' || voteTarget === idea.id || idea.votes.includes(session?.participantId ?? '')}
-                            onClick={() => handleIdeaVote(idea.id)}
-                          >
-                            {idea.votes.includes(session?.participantId ?? '') ? 'Voted' : '+1 vote'}
-                            <Badge variant="secondary" className="text-xs">
-                              {idea.votes.length}
+                          {phase === 'ended' && (
+                            <Badge 
+                              variant="secondary" 
+                              className="gap-1 whitespace-nowrap"
+                            >
+                              <TrendingUp className="h-3 w-3" />
+                              {idea.votes.length} vote{idea.votes.length !== 1 ? 's' : ''}
                             </Badge>
-                          </Button>
+                          )}
                         </div>
                         {idea.details.length > 0 && (
                           <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
@@ -1040,40 +1051,167 @@ function RoomScreen() {
           </div>
 
           {phase === 'ended' && (
-            <Card className="border-white/10 bg-black/40 backdrop-blur">
+            <Card className="rounded-[32px] border-white/10 bg-black/40 backdrop-blur">
               <CardHeader>
-                <CardTitle>Highlights</CardTitle>
-                <CardDescription>Top idea, supporting details, and suggested next steps.</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {topIdea ? (
-                  <div className="rounded-2xl border border-primary/40 bg-primary/10 p-4 text-sm">
-                    <p className="text-xs uppercase tracking-[0.3em] text-primary">Most votes</p>
-                    <h4 className="text-xl font-semibold text-foreground">{topIdea.title}</h4>
-                    <p className="text-muted-foreground">
-                      {topIdea.votes.length} vote{topIdea.votes.length === 1 ? '' : 's'} · championed by {topIdea.authorName}
-                    </p>
-                    {topIdea.details.length > 0 && (
-                      <ul className="mt-2 list-disc space-y-1 pl-5 text-muted-foreground">
-                        {topIdea.details.map((detail) => (
-                          <li key={`summary-${detail.id}`}>
-                            <span className="font-medium text-foreground">{detail.authorName}:</span> {detail.text}
-                          </li>
-                        ))}
-                      </ul>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <TrendingUp className="h-5 w-5 text-primary" />
+                      Voting Results
+                    </CardTitle>
+                    <CardDescription>Live leaderboard with vote distribution</CardDescription>
+                  </div>
+                  <div className="flex flex-col items-end gap-1">
+                    <Badge variant="secondary" className="text-xs">
+                      {votingStats.totalVotes} total vote{votingStats.totalVotes !== 1 ? 's' : ''}
+                    </Badge>
+                    {session && (
+                      <span className="text-xs text-muted-foreground">
+                        You voted {votingStats.participantVoteCount}×
+                      </span>
                     )}
                   </div>
-                ) : (
-                  <p className="text-muted-foreground">No votes yet—add ideas and move through the stages to see a summary.</p>
-                )}
-                <div className="rounded-2xl border border-white/5 bg-black/30 p-4 text-sm text-muted-foreground">
-                  <p className="font-medium text-foreground">Next up</p>
-                  <ol className="list-decimal space-y-1 pl-5">
-                    <li>Convert top idea into a Kanban card with owners.</li>
-                    <li>Break out follow-up tasks from sub-details.</li>
-                    <li>Schedule the next vote or recap session.</li>
-                  </ol>
                 </div>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {votingStats.sortedIdeas.length > 0 ? (
+                  votingStats.sortedIdeas.map((idea, index) => {
+                    const isWinner = index === 0 && idea.votes.length > 0
+                    const votePercentage = votingStats.totalVotes > 0 
+                      ? Math.round((idea.votes.length / votingStats.totalVotes) * 100) 
+                      : 0
+                    const hasVoted = idea.votes.includes(session?.participantId ?? '')
+                    
+                    return (
+                      <div
+                        key={idea.id}
+                        className={cn(
+                          'group relative overflow-hidden rounded-2xl border p-4 transition-all duration-300',
+                          isWinner
+                            ? 'border-yellow-500/50 bg-gradient-to-br from-yellow-500/20 via-yellow-500/10 to-transparent shadow-lg shadow-yellow-500/20'
+                            : 'border-white/10 bg-white/5 hover:border-white/20 hover:bg-white/10'
+                        )}
+                      >
+                        {/* Vote percentage bar background */}
+                        <div
+                          className={cn(
+                            'absolute inset-0 transition-all duration-500',
+                            isWinner ? 'bg-yellow-500/10' : 'bg-primary/5'
+                          )}
+                          style={{ 
+                            width: `${votePercentage}%`,
+                            opacity: 0.5 
+                          }}
+                        />
+                        
+                        <div className="relative flex items-start justify-between gap-4">
+                          <div className="flex-1 space-y-2">
+                            <div className="flex items-center gap-2">
+                              {isWinner && (
+                                <Trophy className="h-5 w-5 text-yellow-500 animate-pulse" />
+                              )}
+                              <div className="flex items-center gap-2">
+                                <Badge 
+                                  variant={index < 3 ? "default" : "secondary"} 
+                                  className={cn(
+                                    "h-6 w-6 rounded-full p-0 flex items-center justify-center",
+                                    index === 0 && "bg-yellow-500 text-yellow-950",
+                                    index === 1 && "bg-slate-400 text-slate-950",
+                                    index === 2 && "bg-amber-700 text-amber-50"
+                                  )}
+                                >
+                                  {index + 1}
+                                </Badge>
+                                <h4 className="font-semibold text-foreground">
+                                  {idea.title}
+                                </h4>
+                              </div>
+                            </div>
+                            
+                            <p className="text-xs text-muted-foreground">
+                              by {idea.authorName} · {new Date(idea.createdAt).toLocaleTimeString([], { 
+                                hour: '2-digit', 
+                                minute: '2-digit' 
+                              })}
+                            </p>
+
+                            {idea.details.length > 0 && (
+                              <div className="mt-2 space-y-1">
+                                {idea.details.slice(0, 2).map((detail) => (
+                                  <p key={detail.id} className="text-xs text-muted-foreground">
+                                    <span className="font-medium text-foreground">{detail.authorName}:</span> {detail.text}
+                                  </p>
+                                ))}
+                                {idea.details.length > 2 && (
+                                  <p className="text-xs italic text-muted-foreground">
+                                    +{idea.details.length - 2} more detail{idea.details.length - 2 !== 1 ? 's' : ''}
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="flex flex-col items-end gap-2">
+                            <div className="flex flex-col items-end">
+                              <div className="flex items-center gap-2">
+                                <span className="text-2xl font-bold text-foreground">
+                                  {idea.votes.length}
+                                </span>
+                                <span className="text-xs text-muted-foreground">
+                                  vote{idea.votes.length !== 1 ? 's' : ''}
+                                </span>
+                              </div>
+                              {votePercentage > 0 && (
+                                <Badge variant="outline" className="text-xs">
+                                  {votePercentage}%
+                                </Badge>
+                              )}
+                            </div>
+                            
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant={hasVoted ? "default" : "outline"}
+                              className={cn(
+                                "gap-2 transition-all",
+                                hasVoted && "bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 border-emerald-500/50"
+                              )}
+                              disabled={voteTarget === idea.id || hasVoted}
+                              onClick={() => handleIdeaVote(idea.id)}
+                            >
+                              {hasVoted ? (
+                                <>
+                                  <CheckCircle2 className="h-3 w-3" />
+                                  Voted
+                                </>
+                              ) : (
+                                '+1 Vote'
+                              )}
+                            </Button>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })
+                ) : (
+                  <div className="rounded-2xl border border-white/5 bg-black/30 p-8 text-center">
+                    <p className="text-muted-foreground">No ideas submitted yet. Start brainstorming to see the leaderboard!</p>
+                  </div>
+                )}
+
+                {topIdea && topIdea.votes.length > 0 && (
+                  <div className="mt-4 rounded-2xl border border-primary/20 bg-primary/5 p-4">
+                    <p className="mb-2 flex items-center gap-2 text-sm font-medium text-primary">
+                      <Trophy className="h-4 w-4" />
+                      Next Steps
+                    </p>
+                    <ol className="list-decimal space-y-1 pl-5 text-sm text-muted-foreground">
+                      <li>Convert "{topIdea.title}" into actionable Kanban cards</li>
+                      <li>Assign owners and break down implementation tasks</li>
+                      <li>Schedule follow-up session to track progress</li>
+                    </ol>
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}
