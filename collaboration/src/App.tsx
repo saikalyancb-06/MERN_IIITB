@@ -427,7 +427,7 @@ function RoomScreen() {
   const [status, setStatus] = useState<StatusState>({ type: 'idle' })
   const [loading, setLoading] = useState(true)
   const [copyState, setCopyState] = useState<'idle' | 'copied'>('idle')
-  const [pendingAction, setPendingAction] = useState<'end' | null>(null)
+  const [pendingAction, setPendingAction] = useState<'end' | 'leave' | null>(null)
   const [removalTarget, setRemovalTarget] = useState<string | null>(null)
   const [modalNotice, setModalNotice] = useState<{ title: string; message: string } | null>(null)
   const [latestHost, setLatestHost] = useState<string>('the host')
@@ -624,6 +624,23 @@ function RoomScreen() {
       navigate('/', { replace: true })
     } catch (error) {
       const fallback = error instanceof Error ? error.message : 'Unable to end room'
+      setStatus({ type: 'error', message: fallback })
+    } finally {
+      setPendingAction(null)
+    }
+  }
+
+  async function handleLeaveMeeting() {
+    if (!room || !session) return
+    setPendingAction('leave')
+    setStatus({ type: 'idle' })
+
+    try {
+      setStatus({ type: 'success', message: 'Left the session' })
+      setSession(null)
+      navigate('/', { replace: true })
+    } catch (error) {
+      const fallback = error instanceof Error ? error.message : 'Unable to leave meeting'
       setStatus({ type: 'error', message: fallback })
     } finally {
       setPendingAction(null)
@@ -1255,6 +1272,18 @@ function RoomScreen() {
                 >
                   <ShieldAlert className="h-4 w-4" />
                   {pendingAction === 'end' ? 'Ending room…' : 'End room for everyone'}
+                </Button>
+              )}
+              {!isAdmin && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="gap-2 border-destructive/50 text-destructive hover:bg-destructive/10"
+                  onClick={handleLeaveMeeting}
+                  disabled={pendingAction === 'leave'}
+                >
+                  <UserMinus className="h-4 w-4" />
+                  {pendingAction === 'leave' ? 'Leaving…' : 'Leave meeting'}
                 </Button>
               )}
             </div>
