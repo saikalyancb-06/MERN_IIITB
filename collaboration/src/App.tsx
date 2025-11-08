@@ -15,18 +15,7 @@ import {
   useMemo,
   useState,
 } from 'react'
-import {
-  Users,
-  Mic,
-  Video,
-  MonitorSmartphone,
-  MessageSquare,
-  Hand,
-  MoreHorizontal,
-  UserMinus,
-  Clock,
-  ShieldAlert,
-} from 'lucide-react'
+import { UserMinus, Clock, ShieldAlert } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -445,8 +434,6 @@ function RoomScreen() {
   const [currentTime, setCurrentTime] = useState(() => new Date())
   const [ideaInputs, setIdeaInputs] = useState({ title: '', description: '' })
   const [detailDrafts, setDetailDrafts] = useState<Record<string, string>>({})
-  const [topicDraft, setTopicDraft] = useState('')
-  const [topicPending, setTopicPending] = useState(false)
   const [ideaPending, setIdeaPending] = useState(false)
   const [phasePending, setPhasePending] = useState(false)
   const [voteTarget, setVoteTarget] = useState<string | null>(null)
@@ -646,28 +633,7 @@ function RoomScreen() {
     }
   }
 
-  async function handleTopicSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!room || !session || !topicDraft.trim()) return
-    setTopicPending(true)
-    try {
-      const { room: updated, message } = await apiRequest<ApiRoomResponse>(
-        `/api/rooms/${room.code}/topic`,
-        {
-          method: 'POST',
-          body: JSON.stringify({ adminId: session.participantId, title: topicDraft }),
-        },
-      )
-      setTopicDraft('')
-      setRoom(updated)
-      setStatus({ type: 'success', message: message || 'Topic updated' })
-    } catch (error) {
-      const fallback = error instanceof Error ? error.message : 'Unable to update topic'
-      setStatus({ type: 'error', message: fallback })
-    } finally {
-      setTopicPending(false)
-    }
-  }
+  // Topic update controls removed from UI; handler no longer needed.
 
   async function handleAddIdea(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -777,24 +743,17 @@ function RoomScreen() {
     )
   }
 
-  const controlButtons = [
-    { label: 'Microphone', icon: Mic },
-    { label: 'Camera', icon: Video },
-    { label: 'Share screen', icon: MonitorSmartphone },
-    { label: 'Chat', icon: MessageSquare },
-    { label: 'Raise hand', icon: Hand },
-    { label: 'More', icon: MoreHorizontal },
-  ]
+  // Controls toolbar icons removed per request.
 
   return (
     <>
       <div
         className={cn(
-          'flex min-h-screen w-full flex-col gap-6 p-0',
+          'flex min-h-screen w-full flex-col gap-0 p-0',
           modalNotice && 'pointer-events-none blur-sm',
         )}
       >
-        <div className="space-y-6 rounded-[32px] border border-white/10 bg-black/30 p-6 shadow-2xl backdrop-blur">
+        <div className="flex flex-1 flex-col gap-6 bg-black/30 p-6 backdrop-blur">
           <div className="flex flex-wrap items-start justify-between gap-4">
             <div className="space-y-3">
               <p className="text-xs uppercase tracking-[0.35em] text-muted-foreground">Room · {room?.code}</p>
@@ -802,27 +761,13 @@ function RoomScreen() {
               <p className="text-sm text-muted-foreground">
                 {room?.roomName || 'Keep everyone focused on the same ideation board.'}
               </p>
-              {isAdmin ? (
-                <form className="flex flex-col gap-2 sm:flex-row" onSubmit={handleTopicSubmit}>
-                  <input
-                    className="flex-1 rounded-2xl border border-white/10 bg-black/40 px-4 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                    placeholder="Set activity focus (e.g., Sprint ideas)"
-                    value={topicDraft}
-                    onChange={(event) => setTopicDraft(event.target.value)}
-                  />
-                  <Button type="submit" disabled={!topicDraft.trim() || topicPending}>
-                    {topicPending ? 'Saving…' : 'Update topic'}
-                  </Button>
-                </form>
-              ) : (
+              {isAdmin ? null : (
                 <p className="text-xs text-muted-foreground">Topic set by the host.</p>
               )}
             </div>
             <Sheet>
               <SheetTrigger asChild>
-                <Button variant="secondary" className="gap-2">
-                  <Users className="h-4 w-4" /> People ({participantCount})
-                </Button>
+                <Button variant="secondary">People ({participantCount})</Button>
               </SheetTrigger>
               <SheetContent side="right" className="flex h-full flex-col gap-4 sm:max-w-md">
                 <SheetHeader>
@@ -879,53 +824,20 @@ function RoomScreen() {
             </Sheet>
           </div>
 
-          {status.message && status.type !== 'idle' && (
-            <div
-              className={cn(
-                'rounded-full px-4 py-1 text-xs font-medium',
-                status.type === 'error' ? 'bg-destructive/20 text-destructive' : 'bg-emerald-500/10 text-emerald-300',
-              )}
-            >
-              {status.message}
-            </div>
-          )}
-
-          <div className="rounded-[32px] border border-white/5 bg-gradient-to-br from-slate-800 via-slate-900 to-[#14254b] px-8 py-12 shadow-inner">
-            {participants.length ? (
-              <div className="grid w-full gap-6 sm:grid-cols-2 lg:grid-cols-3">
-                {participants.map((participant) => (
-                  <Card
-                    key={participant.id}
-                    className={cn(
-                      'border border-white/10 bg-black/30 text-center backdrop-blur',
-                      participant.id === session?.participantId && 'border-primary/70 shadow-lg shadow-primary/20',
-                    )}
-                  >
-                    <CardContent className="flex flex-col items-center gap-3 py-10">
-                      <Avatar className="h-16 w-16 border-2 border-white/30">
-                        <AvatarFallback className="text-lg font-semibold">
-                          {initialsFromName(participant.name)}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div>
-                        <p className="text-base font-semibold text-foreground">{participant.name}</p>
-                        <p className="text-sm text-muted-foreground">
-                          {participant.role === 'admin' ? 'Meeting host' : 'Contributor'}
-                        </p>
-                      </div>
-                    </CardContent>
-                  </Card>
-                ))}
-              </div>
-            ) : (
-              <div className="rounded-3xl border border-white/10 bg-black/40 px-10 py-16 text-center text-muted-foreground">
-                Waiting for people to join…
-              </div>
+        {status.message && status.type !== 'idle' && (
+          <div
+            className={cn(
+              'rounded-full px-4 py-1 text-xs font-medium',
+              status.type === 'error' ? 'bg-destructive/20 text-destructive' : 'bg-emerald-500/10 text-emerald-300',
             )}
+          >
+            {status.message}
           </div>
+        )}
 
-          <div className="grid gap-6 px-6 xl:grid-cols-2">
-          <Card className="border-white/10 bg-black/40 text-sm backdrop-blur">
+        <div className="flex flex-1 flex-col gap-6 min-h-0">
+          <div className="grid flex-1 min-h-0 gap-6 items-stretch xl:grid-cols-2 xl:grid-rows-1">
+          <Card className="flex h-full flex-col rounded-[32px] border border-white/10 bg-black/40 text-sm backdrop-blur">
             <CardHeader>
               <CardTitle className="flex items-center justify-between text-base">
                 <span>Brainstorming console</span>
@@ -939,7 +851,7 @@ function RoomScreen() {
                   : 'Voting only – idea submission is locked.'}
               </CardDescription>
             </CardHeader>
-            <CardContent className="space-y-6">
+            <CardContent className="space-y-6 flex-1 overflow-auto">
               <div className="grid gap-3 sm:grid-cols-3">
                 {stageTimeline.map(({ label, value, description }) => (
                   <div
@@ -1009,14 +921,14 @@ function RoomScreen() {
                 </form>
               </CardContent>
             </Card>
-            <Card className="border-white/10 bg-black/40 backdrop-blur">
+            <Card className="flex h-full flex-col rounded-[32px] border border-white/10 bg-black/40 backdrop-blur">
               <CardHeader>
                 <CardTitle className="text-base">Idea vault</CardTitle>
                 <CardDescription>
                   Track every idea, add sub-details, and tap to vote during the decision round.
                 </CardDescription>
               </CardHeader>
-              <CardContent>
+              <CardContent className="flex-1 overflow-auto">
                 {ideas.length === 0 ? (
                   <p className="text-sm text-muted-foreground">Ideas you add will show up here for everyone to react to.</p>
                 ) : (
@@ -1123,39 +1035,37 @@ function RoomScreen() {
             </Card>
           )}
 
-          <div className="rounded-2xl border border-white/5 bg-black/40 p-4 backdrop-blur">
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <div className="flex items-center gap-3 text-sm text-muted-foreground">
-                <Clock className="h-4 w-4" />
-                <span>{formattedTime}</span>
-                {room?.code && (
-                  <Button type="button" variant="ghost" size="sm" onClick={handleCopyCode} className="gap-2">
-                    {copyState === 'copied' ? 'Copied' : 'Copy key'}
-                    <Badge variant="secondary" className="text-xs uppercase tracking-[0.2em]">
-                      {room.code}
-                    </Badge>
-                  </Button>
-                )}
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {controlButtons.map(({ label, icon: Icon }) => (
-                  <Button key={label} type="button" variant="ghost" size="icon" aria-label={label}>
-                    <Icon className="h-4 w-4" />
-                  </Button>
-                ))}
-                {isAdmin && (
-                  <Button
-                    type="button"
-                    variant="destructive"
-                    className="gap-2"
-                    onClick={handleEndRoom}
-                    disabled={pendingAction === 'end'}
-                  >
-                    <ShieldAlert className="h-4 w-4" />
-                    {pendingAction === 'end' ? 'Ending room…' : 'End room for everyone'}
-                  </Button>
-                )}
-              </div>
+          </div>
+
+        </div>
+        <div className="bg-black/40 p-4 backdrop-blur">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-center gap-3 text-sm text-muted-foreground">
+              <Clock className="h-4 w-4" />
+              <span>{formattedTime}</span>
+              {room?.code && (
+                <Button type="button" variant="ghost" size="sm" onClick={handleCopyCode} className="gap-2">
+                  {copyState === 'copied' ? 'Copied' : 'Copy key'}
+                  <Badge variant="secondary" className="text-xs uppercase tracking-[0.2em]">
+                    {room.code}
+                  </Badge>
+                </Button>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Control toolbar icons removed */}
+              {isAdmin && (
+                <Button
+                  type="button"
+                  variant="destructive"
+                  className="gap-2"
+                  onClick={handleEndRoom}
+                  disabled={pendingAction === 'end'}
+                >
+                  <ShieldAlert className="h-4 w-4" />
+                  {pendingAction === 'end' ? 'Ending room…' : 'End room for everyone'}
+                </Button>
+              )}
             </div>
           </div>
         </div>
