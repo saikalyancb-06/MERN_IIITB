@@ -471,6 +471,7 @@ function RoomScreen() {
 
   const topIdea = useMemo(() => {
     if (!ideas.length) return null
+    // Sort by votes (descending), return the winner even if no votes yet
     return [...ideas].sort((a, b) => b.votes.length - a.votes.length)[0]
   }, [ideas])
 
@@ -708,12 +709,15 @@ function RoomScreen() {
   async function handleIdeaVote(ideaId: string) {
     if (!room || !session) return
     setVoteTarget(ideaId)
+    setStatus({ type: 'idle' })
     try {
       const { room: updated } = await apiRequest<ApiRoomResponse>(`/api/rooms/${room.code}/ideas/${ideaId}/vote`, {
         method: 'POST',
         body: JSON.stringify({ participantId: session.participantId }),
       })
       setRoom(updated)
+      setStatus({ type: 'success', message: 'Vote updated' })
+      setTimeout(() => setStatus({ type: 'idle' }), 2000)
     } catch (error) {
       const fallback = error instanceof Error ? error.message : 'Unable to vote on idea'
       setStatus({ type: 'error', message: fallback })
@@ -899,6 +903,21 @@ function RoomScreen() {
                   <SheetDescription>{participantCount} in this room</SheetDescription>
                 </SheetHeader>
                 <Separator />
+                {!isAdmin && (
+                  <>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full gap-2 border-destructive/50 text-destructive hover:bg-destructive/10"
+                      onClick={handleLeaveMeeting}
+                      disabled={pendingAction === 'leave'}
+                    >
+                      <UserMinus className="h-4 w-4" />
+                      {pendingAction === 'leave' ? 'Leaving…' : 'Leave Meeting'}
+                    </Button>
+                    <Separator />
+                  </>
+                )}
                 <ScrollArea className="flex-1 pr-4">
                   <div className="space-y-3">
                     {participants.map((participant) => (
@@ -962,7 +981,7 @@ function RoomScreen() {
         <div className="flex flex-1 flex-col gap-6 min-h-0">
           <div className="grid flex-1 min-h-0 gap-6 items-stretch xl:grid-cols-2 xl:grid-rows-1">
           
-          {/* Left Column - Voting Results (when ended) or Brainstorming Console */}
+          {/* Left Column - Voting Results / Planning / Brainstorming Console */}
           {phase === 'ended' ? (
             <Card className="flex h-full flex-col rounded-[32px] border border-white/10 bg-black/40 backdrop-blur">
               <CardHeader>
@@ -1090,13 +1109,15 @@ function RoomScreen() {
                                   "gap-2 transition-all",
                                   hasVoted && "bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 border-emerald-500/50"
                                 )}
-                                disabled={voteTarget === idea.id || hasVoted}
+                                disabled={voteTarget === idea.id}
                                 onClick={() => handleIdeaVote(idea.id)}
                               >
-                                {hasVoted ? (
+                                {voteTarget === idea.id ? (
+                                  'Updating...'
+                                ) : hasVoted ? (
                                   <>
                                     <CheckCircle2 className="h-3 w-3" />
-                                    Voted
+                                    Voted (click to remove)
                                   </>
                                 ) : (
                                   '+1 Vote'
@@ -1109,7 +1130,7 @@ function RoomScreen() {
                     })}
 
                     {topIdea && topIdea.votes.length > 0 && (
-                      <div className="mt-4 rounded-2xl border border-primary/20 bg-primary/5 p-4">
+                      <div className="mt-4 rounded-2xl border border-primary/20 bg-primary/5 p-4 space-y-3">
                         <p className="mb-2 flex items-center gap-2 text-sm font-medium text-primary">
                           <Trophy className="h-4 w-4" />
                           Next Steps
@@ -1119,6 +1140,21 @@ function RoomScreen() {
                           <li>Assign owners and break down implementation tasks</li>
                           <li>Schedule follow-up session to track progress</li>
                         </ol>
+                        {isAdmin ? (
+                          <Button
+                            type="button"
+                            className="w-full gap-2"
+                            onClick={() => handlePhaseChange('planning', 10)}
+                            disabled={phasePending}
+                          >
+                            <Target className="h-4 w-4" />
+                            {phasePending ? 'Starting Planning...' : 'Start Planning Phase'}
+                          </Button>
+                        ) : (
+                          <p className="text-xs text-muted-foreground text-center pt-2">
+                            Waiting for host to start planning phase...
+                          </p>
+                        )}
                       </div>
                     )}
                   </>
@@ -1129,173 +1165,10 @@ function RoomScreen() {
                 )}
               </CardContent>
             </Card>
-          ) : (
-          <Card className="flex h-full flex-col rounded-[32px] border border-white/10 bg-black/40 text-sm backdrop-blur">
-            <CardHeader>
-              <CardTitle className="flex items-center justify-between text-base">
-                <span>Brainstorming console</span>
-                <div className="flex items-center gap-2">
-                  {timeRemaining && (
-                    <Badge variant="outline" className="gap-1 text-xs">
-                      <Timer className="h-3 w-3" />
-                      {timeRemaining}
-                    </Badge>
-                  )}
-                  <span className="rounded-full bg-primary/20 px-3 py-1 text-xs text-primary-foreground">
-                    {phase === 'ideate' ? 'Ideating' : phase === 'planning' ? 'Planning' : 'Voting'}
-                  </span>
-                </div>
-              </CardTitle>
-              <CardDescription>
-                {phase === 'ideate'
-                  ? 'Collect raw ideas with a clear title and short description.'
-                  : phase === 'planning'
-                  ? 'Break down the winning idea into actionable tasks.'
-                  : 'Voting only – idea submission is locked.'}
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6 flex-1 overflow-auto">
-              <div className="grid gap-3 sm:grid-cols-3">
-                {stageTimeline.map(({ label, value, description }) => (
-                  <div
-                    key={value}
-                    className={cn(
-                      'rounded-2xl border px-4 py-3',
-                      phase === value
-                        ? 'border-primary bg-primary/10 text-primary-foreground'
-                        : 'border-white/10 bg-white/5 text-muted-foreground',
-                    )}
-                  >
-                    <p className="text-xs font-semibold uppercase tracking-wide">{label}</p>
-                    <p className="text-[0.8rem]">{description}</p>
-                  </div>
-                ))}
-              </div>
-
-              <form className="space-y-3" onSubmit={handleAddIdea}>
-                <input
-                  className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  placeholder="Idea title"
-                  value={ideaInputs.title}
-                  onChange={(event) => setIdeaInputs((s) => ({ ...s, title: event.target.value }))}
-                  disabled={phase !== 'ideate'}
-                />
-                <textarea
-                  className="min-h-[120px] w-full rounded-2xl border border-white/10 bg-black/40 p-4 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  placeholder="Short description"
-                  value={ideaInputs.description}
-                  onChange={(event) => setIdeaInputs((s) => ({ ...s, description: event.target.value }))}
-                  disabled={phase !== 'ideate'}
-                />
-                  <div className="flex flex-wrap items-center gap-3">
-                    <Button type="submit" disabled={!canSubmitIdea}>
-                      {ideaPending ? 'Submitting…' : 'Submit idea'}
-                    </Button>
-                    {isAdmin && (
-                      <div className="flex flex-wrap gap-2">
-                        {stageTimeline.map(({ value, label, defaultMinutes }) => (
-                        <Button
-                          key={value}
-                          type="button"
-                          variant={phase === value ? 'default' : 'outline'}
-                          size="sm"
-                          onClick={() => handlePhaseChange(value, defaultMinutes)}
-                          disabled={phasePending}
-                          className="gap-1"
-                        >
-                          {label} ({defaultMinutes}m)
-                        </Button>
-                      ))}
-                    </div>
-                  )}
-                  {ideaHelperText && <span className="text-xs text-muted-foreground">{ideaHelperText}</span>}
-                    {!isAdmin && (
-                      <span className="text-xs text-muted-foreground">
-                        {userIdeaCount}/3 ideas submitted
-                      </span>
-                    )}
-                    {isAdmin && <span className="text-xs text-muted-foreground">Hosts can add unlimited ideas.</span>}
-                  </div>
-                </form>
-              </CardContent>
-            </Card>
-          )}
-            
-            {/* Right Column - Idea Vault */}
+          ) : phase === 'planning' ? (
+            /* Planning Phase Console */
+            topIdea ? (
             <Card className="flex h-full flex-col rounded-[32px] border border-white/10 bg-black/40 backdrop-blur">
-              <CardHeader>
-                <CardTitle className="text-base">Idea vault</CardTitle>
-                <CardDescription>
-                  Track every idea, add sub-details, and tap to vote during the decision round.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="flex-1 overflow-auto">
-                {ideas.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Ideas you add will show up here for everyone to react to.</p>
-                ) : (
-                  <div className="space-y-4">
-                    {ideas.map((idea) => (
-                      <div key={idea.id} className="rounded-2xl border border-white/10 bg-black/30 p-4">
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                          <div>
-                            <p className="text-base font-medium text-foreground">{idea.title}</p>
-                            <p className="text-sm text-muted-foreground">{idea.description}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {idea.authorName} · {new Date(idea.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                            </p>
-                          </div>
-                          {phase === 'ended' && (
-                            <Badge 
-                              variant="secondary" 
-                              className="gap-1 whitespace-nowrap"
-                            >
-                              <TrendingUp className="h-3 w-3" />
-                              {idea.votes.length} vote{idea.votes.length !== 1 ? 's' : ''}
-                            </Badge>
-                          )}
-                        </div>
-                        {idea.details.length > 0 && (
-                          <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
-                            {idea.details.map((detail) => (
-                              <li key={detail.id}>
-                                <span className="font-medium text-foreground">{detail.authorName}:</span> {detail.text}
-                              </li>
-                            ))}
-                          </ul>
-                        )}
-                        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-                          <input
-                            className="flex-1 rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
-                            placeholder="Add sub-detail, attachment, or follow-up"
-                            value={detailDrafts[idea.id] ?? ''}
-                            onChange={(event) =>
-                              setDetailDrafts((prev) => ({
-                                ...prev,
-                                [idea.id]: event.target.value,
-                              }))
-                            }
-                          />
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            disabled={!detailDrafts[idea.id]?.trim() || detailTarget === idea.id}
-                            onClick={() => handleAddDetail(idea.id)}
-                          >
-                            {detailTarget === idea.id ? 'Adding…' : 'Add detail'}
-                          </Button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Planning Phase - Action Plan for Winner */}
-          {phase === 'planning' && topIdea && (
-            <Card className="rounded-[32px] border-white/10 bg-black/40 backdrop-blur">
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <div>
@@ -1305,29 +1178,78 @@ function RoomScreen() {
                     </CardTitle>
                     <CardDescription>Break down the winning idea into actionable tasks</CardDescription>
                   </div>
-                  <Badge variant="secondary" className="gap-1">
-                    <Trophy className="h-3 w-3 text-yellow-500" />
-                    Winner ({topIdea.votes.length} votes)
-                  </Badge>
+                  <div className="flex items-center gap-2">
+                    {timeRemaining && (
+                      <Badge variant="outline" className="gap-1 text-xs">
+                        <Timer className="h-3 w-3" />
+                        {timeRemaining}
+                      </Badge>
+                    )}
+                    <Badge variant="secondary" className="gap-1">
+                      <Trophy className="h-3 w-3 text-yellow-500" />
+                      Winner ({topIdea.votes.length} votes)
+                    </Badge>
+                  </div>
                 </div>
               </CardHeader>
-              <CardContent className="space-y-6">
-                {/* Idea Summary */}
+              <CardContent className="flex-1 overflow-auto space-y-6">
+                {/* Idea Summary with Contributors */}
                 <div className="rounded-2xl border border-primary/20 bg-primary/5 p-4">
-                  <h4 className="mb-2 font-semibold text-foreground">Summary</h4>
-                  <p className="text-sm text-muted-foreground">{topIdea.description}</p>
+                  <div className="flex items-start justify-between mb-2">
+                    <h4 className="font-semibold text-foreground">Winning Idea Summary</h4>
+                    <Badge variant="outline" className="gap-1">
+                      <Users className="h-3 w-3" />
+                      {new Set([topIdea.authorId, ...topIdea.details.map(d => d.authorId)]).size} contributor{new Set([topIdea.authorId, ...topIdea.details.map(d => d.authorId)]).size !== 1 ? 's' : ''}
+                    </Badge>
+                  </div>
+                  <p className="text-sm text-muted-foreground mb-2">{topIdea.description}</p>
+                  <p className="text-xs text-muted-foreground">
+                    Originally by {topIdea.authorName} · {topIdea.votes.length} vote{topIdea.votes.length !== 1 ? 's' : ''}
+                  </p>
+                  
+                  {/* Discussion Thread */}
                   {topIdea.details.length > 0 && (
-                    <div className="mt-3 space-y-1">
+                    <div className="mt-4 space-y-2 max-h-64 overflow-auto rounded-xl border border-white/10 bg-black/20 p-3">
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Team Discussion</p>
                       {topIdea.details.map((detail) => (
-                        <p key={detail.id} className="text-xs text-muted-foreground">
-                          <span className="font-medium text-foreground">{detail.authorName}:</span> {detail.text}
-                        </p>
+                        <div key={detail.id} className="rounded-lg border border-white/5 bg-white/5 p-2">
+                          <p className="text-xs text-muted-foreground mb-1">
+                            <span className="font-medium text-foreground">{detail.authorName}</span>
+                            <span className="mx-1">·</span>
+                            <span>{new Date(detail.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                          </p>
+                          <p className="text-sm text-foreground">{detail.text}</p>
+                        </div>
                       ))}
                     </div>
                   )}
+                  
+                  {/* Add Discussion Input */}
+                  <div className="mt-3 flex gap-2">
+                    <input
+                      className="flex-1 rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+                      placeholder="Add your thoughts, suggestions, or clarifications..."
+                      value={detailDrafts[topIdea.id] ?? ''}
+                      onChange={(event) =>
+                        setDetailDrafts((prev) => ({
+                          ...prev,
+                          [topIdea.id]: event.target.value,
+                        }))
+                      }
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      disabled={!detailDrafts[topIdea.id]?.trim() || detailTarget === topIdea.id}
+                      onClick={() => handleAddDetail(topIdea.id)}
+                    >
+                      {detailTarget === topIdea.id ? 'Adding…' : 'Add'}
+                    </Button>
+                  </div>
                 </div>
 
-                {/* Action Items */}
+                {/* Action Items List */}
                 <div className="space-y-3">
                   <div className="flex items-center justify-between">
                     <h4 className="flex items-center gap-2 font-semibold text-foreground">
@@ -1450,6 +1372,27 @@ function RoomScreen() {
                   </div>
                 </div>
 
+                {/* Phase Controls (Admin Only) */}
+                {isAdmin && (
+                  <div className="rounded-xl border border-white/10 bg-black/30 p-4">
+                    <div className="flex flex-wrap gap-2">
+                      {stageTimeline.map(({ value, label, defaultMinutes }) => (
+                        <Button
+                          key={value}
+                          type="button"
+                          variant={phase === value ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => handlePhaseChange(value, defaultMinutes)}
+                          disabled={phasePending}
+                          className="gap-1"
+                        >
+                          {label} ({defaultMinutes}m)
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {/* Statistics */}
                 <div className="grid grid-cols-3 gap-4 rounded-xl border border-white/10 bg-black/30 p-4">
                   <div className="text-center">
@@ -1473,7 +1416,221 @@ function RoomScreen() {
                 </div>
               </CardContent>
             </Card>
+            ) : (
+            /* No ideas in Planning phase */
+            <Card className="flex h-full flex-col rounded-[32px] border border-white/10 bg-black/40 backdrop-blur">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Target className="h-5 w-5 text-primary" />
+                  Planning Phase
+                </CardTitle>
+                <CardDescription>No ideas to plan yet</CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-1 items-center justify-center">
+                <div className="text-center space-y-4">
+                  <p className="text-muted-foreground">
+                    Go back to Ideate phase to create ideas first.
+                  </p>
+                  {isAdmin && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => handlePhaseChange('ideate', 5)}
+                    >
+                      Back to Ideate
+                    </Button>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+            )
+          ) : (
+          /* Ideate Phase Console */
+          <Card className="flex h-full flex-col rounded-[32px] border border-white/10 bg-black/40 text-sm backdrop-blur">
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between text-base">
+                <span>Brainstorming console</span>
+                <div className="flex items-center gap-2">
+                  {timeRemaining && (
+                    <Badge variant="outline" className="gap-1 text-xs">
+                      <Timer className="h-3 w-3" />
+                      {timeRemaining}
+                    </Badge>
+                  )}
+                  <span className="rounded-full bg-primary/20 px-3 py-1 text-xs text-primary-foreground">
+                    {phase === 'ideate' ? 'Ideating' : phase === 'planning' ? 'Planning' : 'Voting'}
+                  </span>
+                </div>
+              </CardTitle>
+              <CardDescription>
+                {phase === 'ideate'
+                  ? 'Collect raw ideas with a clear title and short description.'
+                  : phase === 'planning'
+                  ? 'Break down the winning idea into actionable tasks.'
+                  : 'Voting only – idea submission is locked.'}
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-6 flex-1 overflow-auto">
+              <div className="grid gap-3 sm:grid-cols-3">
+                {stageTimeline.map(({ label, value, description }) => (
+                  <div
+                    key={value}
+                    className={cn(
+                      'rounded-2xl border px-4 py-3',
+                      phase === value
+                        ? 'border-primary bg-primary/10 text-primary-foreground'
+                        : 'border-white/10 bg-white/5 text-muted-foreground',
+                    )}
+                  >
+                    <p className="text-xs font-semibold uppercase tracking-wide">{label}</p>
+                    <p className="text-[0.8rem]">{description}</p>
+                  </div>
+                ))}
+              </div>
+
+              <form className="space-y-3" onSubmit={handleAddIdea}>
+                <input
+                  className="w-full rounded-2xl border border-white/10 bg-black/40 px-4 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  placeholder="Idea title"
+                  value={ideaInputs.title}
+                  onChange={(event) => setIdeaInputs((s) => ({ ...s, title: event.target.value }))}
+                  disabled={phase !== 'ideate'}
+                />
+                <textarea
+                  className="min-h-[120px] w-full rounded-2xl border border-white/10 bg-black/40 p-4 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  placeholder="Short description"
+                  value={ideaInputs.description}
+                  onChange={(event) => setIdeaInputs((s) => ({ ...s, description: event.target.value }))}
+                  disabled={phase !== 'ideate'}
+                />
+                  <div className="flex flex-wrap items-center gap-3">
+                    <Button type="submit" disabled={!canSubmitIdea}>
+                      {ideaPending ? 'Submitting…' : 'Submit idea'}
+                    </Button>
+                    {isAdmin && (
+                      <div className="flex flex-wrap gap-2">
+                        {stageTimeline.map(({ value, label, defaultMinutes }) => (
+                        <Button
+                          key={value}
+                          type="button"
+                          variant={phase === value ? 'default' : 'outline'}
+                          size="sm"
+                          onClick={() => handlePhaseChange(value, defaultMinutes)}
+                          disabled={phasePending}
+                          className="gap-1"
+                        >
+                          {label} ({defaultMinutes}m)
+                        </Button>
+                      ))}
+                    </div>
+                  )}
+                  {ideaHelperText && <span className="text-xs text-muted-foreground">{ideaHelperText}</span>}
+                    {!isAdmin && (
+                      <span className="text-xs text-muted-foreground">
+                        {userIdeaCount}/3 ideas submitted
+                      </span>
+                    )}
+                    {isAdmin && <span className="text-xs text-muted-foreground">Hosts can add unlimited ideas.</span>}
+                  </div>
+                </form>
+              </CardContent>
+            </Card>
           )}
+            
+            {/* Right Column - Idea Vault */}
+            <Card className="flex h-full flex-col rounded-[32px] border border-white/10 bg-black/40 backdrop-blur">
+              <CardHeader>
+                <CardTitle className="text-base">
+                  {phase === 'planning' ? 'All Ideas' : 'Idea vault'}
+                </CardTitle>
+                <CardDescription>
+                  {phase === 'planning' 
+                    ? 'Reference all submitted ideas while planning the winner'
+                    : 'Track every idea, add sub-details, and tap to vote during the decision round.'
+                  }
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="flex-1 overflow-auto">
+                {ideas.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Ideas you add will show up here for everyone to react to.</p>
+                ) : (
+                  <div className="space-y-4">
+                    {ideas.map((idea) => {
+                      const isWinningIdea = phase === 'planning' && topIdea?.id === idea.id
+                      return (
+                        <div 
+                          key={idea.id} 
+                          className={cn(
+                            "rounded-2xl border p-4",
+                            isWinningIdea 
+                              ? "border-yellow-500/50 bg-gradient-to-br from-yellow-500/20 via-yellow-500/10 to-transparent"
+                              : "border-white/10 bg-black/30"
+                          )}
+                        >
+                          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                              <div className="flex items-center gap-2">
+                                {isWinningIdea && (
+                                  <Trophy className="h-4 w-4 text-yellow-500" />
+                                )}
+                                <p className="text-base font-medium text-foreground">{idea.title}</p>
+                              </div>
+                              <p className="text-sm text-muted-foreground">{idea.description}</p>
+                              <p className="text-xs text-muted-foreground">
+                                {idea.authorName} · {new Date(idea.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              </p>
+                            </div>
+                            {(phase === 'ended' || phase === 'planning') && (
+                              <Badge 
+                                variant="secondary" 
+                                className="gap-1 whitespace-nowrap"
+                              >
+                                <TrendingUp className="h-3 w-3" />
+                                {idea.votes.length} vote{idea.votes.length !== 1 ? 's' : ''}
+                              </Badge>
+                            )}
+                          </div>
+                          {idea.details.length > 0 && (
+                            <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+                              {idea.details.map((detail) => (
+                                <li key={detail.id}>
+                                  <span className="font-medium text-foreground">{detail.authorName}:</span> {detail.text}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
+                          {phase !== 'planning' && (
+                            <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                              <input
+                                className="flex-1 rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+                                placeholder="Add sub-detail, attachment, or follow-up"
+                                value={detailDrafts[idea.id] ?? ''}
+                                onChange={(event) =>
+                                  setDetailDrafts((prev) => ({
+                                    ...prev,
+                                    [idea.id]: event.target.value,
+                                  }))
+                                }
+                              />
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={!detailDrafts[idea.id]?.trim() || detailTarget === idea.id}
+                                onClick={() => handleAddDetail(idea.id)}
+                              >
+                                {detailTarget === idea.id ? 'Adding…' : 'Add detail'}
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
 
           </div>
 
@@ -1520,12 +1677,12 @@ function RoomScreen() {
                 <Button
                   type="button"
                   variant="outline"
-                  className="gap-2 border-destructive/50 text-destructive hover:bg-destructive/10"
+                  className="gap-2 border-destructive/60 bg-destructive/5 text-destructive hover:bg-destructive/15 hover:border-destructive"
                   onClick={handleLeaveMeeting}
                   disabled={pendingAction === 'leave'}
                 >
                   <UserMinus className="h-4 w-4" />
-                  {pendingAction === 'leave' ? 'Leaving…' : 'Leave meeting'}
+                  {pendingAction === 'leave' ? 'Leaving…' : 'Leave Meeting'}
                 </Button>
               )}
             </div>

@@ -490,8 +490,8 @@ app.post('/api/rooms/:code/ideas/:ideaId/vote', async (req, res) => {
       return res.status(403).json({ message: 'You are not part of this room' })
     }
 
-    if (room.phase !== 'ended') {
-      return res.status(400).json({ message: 'Voting is only available after the session ends' })
+    if (room.phase !== 'ended' && room.phase !== 'planning') {
+      return res.status(400).json({ message: 'Voting is only available during voting and planning phases' })
     }
 
     const idea = (room.ideas ?? []).find((entry) => entry.id === ideaId)
@@ -499,20 +499,33 @@ app.post('/api/rooms/:code/ideas/:ideaId/vote', async (req, res) => {
       return res.status(404).json({ message: 'Idea not found' })
     }
 
-    if ((idea.votes ?? []).includes(participantId)) {
-      return res.status(400).json({ message: 'You already voted on this idea' })
+    const hasVoted = (idea.votes ?? []).includes(participantId)
+    
+    if (hasVoted) {
+      // Remove vote (toggle off)
+      await roomsCollection.updateOne(
+        { _id: room._id, 'ideas.id': ideaId },
+        {
+          $pull: { 'ideas.$.votes': participantId },
+          $set: { updatedAt: new Date() },
+        },
+      )
+    } else {
+      // Add vote (toggle on)
+      await roomsCollection.updateOne(
+        { _id: room._id, 'ideas.id': ideaId },
+        {
+          $push: { 'ideas.$.votes': participantId },
+          $set: { updatedAt: new Date() },
+        },
+      )
     }
 
-    await roomsCollection.updateOne(
-      { _id: room._id, 'ideas.id': ideaId },
-      {
-        $push: { 'ideas.$.votes': participantId },
-        $set: { updatedAt: new Date() },
-      },
-    )
-
     const updatedRoom = await roomsCollection.findOne({ _id: room._id })
-    return res.status(200).json({ room: formatRoom(updatedRoom), message: 'Vote recorded' })
+    return res.status(200).json({ 
+      room: formatRoom(updatedRoom), 
+      message: hasVoted ? 'Vote removed' : 'Vote recorded' 
+    })
   } catch (error) {
     console.error('Error voting for idea', error)
     return res.status(500).json({ message: 'Unable to vote for idea' })
