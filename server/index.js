@@ -18,6 +18,7 @@ let client
 let roomsCollection
 
 const LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+const PHASES = ['ideate', 'ended']
 
 function generateRoomCode(length = 5) {
   let code = ''
@@ -40,6 +41,22 @@ function sanitizeId(value = '') {
   return String(value ?? '').trim()
 }
 
+function sanitizeText(value = '', limit = 512) {
+  return value.trim().slice(0, limit)
+}
+
+function isAdminParticipant(participant) {
+  return participant?.role === 'admin'
+}
+
+function generateId() {
+  return randomUUID()
+}
+
+function ensureParticipant(room, participantId) {
+  return (room.participants ?? []).find((participant) => participant.id === participantId)
+}
+
 function formatRoom(roomDoc) {
   return {
     id: roomDoc._id.toString(),
@@ -49,6 +66,10 @@ function formatRoom(roomDoc) {
     participants: roomDoc.participants ?? [],
     createdAt: roomDoc.createdAt,
     updatedAt: roomDoc.updatedAt,
+    topic: roomDoc.topic ?? null,
+    phase: roomDoc.phase ?? 'ideate',
+    phaseEndsAt: roomDoc.phaseEndsAt ?? null,
+    ideas: roomDoc.ideas ?? [],
   }
 }
 
@@ -63,12 +84,20 @@ async function createRoomDocument({ adminName, roomName }) {
       adminName,
       participants: [
         {
-          id: randomUUID(),
+          id: generateId(),
           name: adminName,
           role: 'admin',
           joinedAt: now,
         },
       ],
+      topic: {
+        title: 'Untitled ideation',
+        createdAt: now,
+        createdById: null,
+      },
+      phase: 'ideate',
+      phaseEndsAt: null,
+      ideas: [],
       createdAt: now,
       updatedAt: now,
     }
@@ -137,7 +166,7 @@ app.post('/api/rooms/join', async (req, res) => {
 
     if (!alreadyParticipant) {
       const newParticipant = {
-        id: randomUUID(),
+        id: generateId(),
         name: participantName,
         role: 'participant',
         joinedAt: new Date(),
@@ -187,6 +216,72 @@ app.get('/api/rooms/:code', async (req, res) => {
   }
 })
 
+app.get('/api/rooms/:code/stream', async (req, res) => {
+  try {
+    const normalizedCode = normalizeCode(req.params.code)
+    const participantId = sanitizeId(req.query?.participantId)
+
+    if (!participantId) {
+      return res.status(400).json({ message: 'Participant id required' })
+    }
+
+    const room = await roomsCollection.findOne({ code: normalizedCode })
+
+    if (!room) {
+      return res.status(404).json({ message: 'Room not found' })
+    }
+
+    const member = (room.participants ?? []).find((participant) => participant.id === participantId)
+
+    if (!member) {
+      return res.status(403).json({ message: 'Not part of this room' })
+    }
+
+    res.setHeader('Content-Type', 'text/event-stream')
+    res.setHeader('Cache-Control', 'no-cache')
+    res.setHeader('Connection', 'keep-alive')
+
+    const sendEvent = (payload) => {
+      res.write(`data: ${JSON.stringify(payload)}\n\n`)
+    }
+
+    sendEvent({ type: 'init', room: formatRoom(room) })
+
+    let latestAdminName = room.adminName
+
+    const pipeline = [{ $match: { 'fullDocument._id': room._id } }]
+    const changeStream = roomsCollection.watch(pipeline, { fullDocument: 'updateLookup' })
+
+    changeStream.on('change', (change) => {
+      if (change.operationType === 'delete') {
+        sendEvent({ type: 'closed', adminName: latestAdminName })
+        changeStream.close()
+        res.end()
+        return
+      }
+
+      if (change.fullDocument) {
+        latestAdminName = change.fullDocument.adminName
+        sendEvent({ type: 'update', room: formatRoom(change.fullDocument) })
+      }
+    })
+
+    changeStream.on('error', (error) => {
+      console.error('Stream error', error)
+      sendEvent({ type: 'error', message: 'Stream disconnected' })
+      changeStream.close()
+      res.end()
+    })
+
+    req.on('close', () => {
+      changeStream.close()
+    })
+  } catch (error) {
+    console.error('Error establishing room stream', error)
+    return res.status(500).json({ message: 'Unable to stream room updates' })
+  }
+})
+
 app.delete('/api/rooms/:code', async (req, res) => {
   try {
     const normalizedCode = normalizeCode(req.params.code)
@@ -206,9 +301,7 @@ app.delete('/api/rooms/:code', async (req, res) => {
       return res.status(404).json({ message: 'Room not found' })
     }
 
-    const hostParticipant = (room.participants ?? []).find(
-      (participant) => participant.role === 'admin',
-    )
+    const hostParticipant = (room.participants ?? []).find(isAdminParticipant)
 
     if (hostParticipant?.id !== adminId) {
       return res.status(403).json({ message: 'Only the host can end this room' })
@@ -220,6 +313,292 @@ app.delete('/api/rooms/:code', async (req, res) => {
   } catch (error) {
     console.error('Error ending room', error)
     return res.status(500).json({ message: 'Unable to end room, try again later' })
+  }
+})
+
+app.delete('/api/rooms/:code/participants/:participantId', async (req, res) => {
+  try {
+    const normalizedCode = normalizeCode(req.params.code)
+    const participantId = sanitizeId(req.params.participantId)
+    const adminId = sanitizeId(req.body?.adminId)
+
+    if (!participantId) {
+      return res.status(400).json({ message: 'Participant id required' })
+    }
+
+    if (!adminId) {
+      return res.status(400).json({ message: 'Admin id required' })
+    }
+
+    const room = await roomsCollection.findOne({ code: normalizedCode })
+
+    if (!room) {
+      return res.status(404).json({ message: 'Room not found' })
+    }
+
+    const hostParticipant = (room.participants ?? []).find(isAdminParticipant)
+
+    if (hostParticipant?.id !== adminId) {
+      return res.status(403).json({ message: 'Only the host can remove participants' })
+    }
+
+    if (participantId === adminId) {
+      return res.status(400).json({ message: 'Host cannot remove themselves here' })
+    }
+
+    const updateResult = await roomsCollection.updateOne(
+      { _id: room._id },
+      {
+        $pull: { participants: { id: participantId } },
+        $set: { updatedAt: new Date() },
+      },
+    )
+
+    if (updateResult.modifiedCount === 0) {
+      return res.status(404).json({ message: 'Participant not found in room' })
+    }
+
+    return res.status(200).json({ message: 'Participant removed' })
+  } catch (error) {
+    console.error('Error removing participant', error)
+    return res.status(500).json({ message: 'Unable to remove participant' })
+  }
+})
+
+app.post('/api/rooms/:code/topic', async (req, res) => {
+  try {
+    const normalizedCode = normalizeCode(req.params.code)
+    const adminId = sanitizeId(req.body?.adminId)
+    const topicTitle = sanitizeText(req.body?.title, 140)
+
+    if (!adminId || !topicTitle) {
+      return res.status(400).json({ message: 'Admin id and topic title are required' })
+    }
+
+    const room = await roomsCollection.findOne({ code: normalizedCode })
+    if (!room) {
+      return res.status(404).json({ message: 'Room not found' })
+    }
+
+    const hostParticipant = (room.participants ?? []).find(isAdminParticipant)
+    if (hostParticipant?.id !== adminId) {
+      return res.status(403).json({ message: 'Only the host can set the topic' })
+    }
+
+    await roomsCollection.updateOne(
+      { _id: room._id },
+      {
+        $set: {
+          topic: {
+            title: topicTitle,
+            createdAt: new Date(),
+            createdById: adminId,
+          },
+          updatedAt: new Date(),
+        },
+      },
+    )
+
+    const updatedRoom = await roomsCollection.findOne({ _id: room._id })
+    return res.status(200).json({ room: formatRoom(updatedRoom), message: 'Topic updated' })
+  } catch (error) {
+    console.error('Error updating topic', error)
+    return res.status(500).json({ message: 'Unable to update topic' })
+  }
+})
+
+app.post('/api/rooms/:code/ideas', async (req, res) => {
+  try {
+    const normalizedCode = normalizeCode(req.params.code)
+    const participantId = sanitizeId(req.body?.participantId)
+    const ideaTitle = sanitizeText(req.body?.title, 140)
+    const ideaDescription = sanitizeText(req.body?.description, 1000)
+
+    if (!participantId || !ideaTitle || !ideaDescription) {
+      return res.status(400).json({ message: 'Participant, title, and description are required' })
+    }
+
+    const room = await roomsCollection.findOne({ code: normalizedCode })
+    if (!room) {
+      return res.status(404).json({ message: 'Room not found' })
+    }
+
+    const participant = ensureParticipant(room, participantId)
+    if (!participant) {
+      return res.status(403).json({ message: 'You are not part of this room' })
+    }
+
+    if (room.phase === 'ended') {
+      return res.status(400).json({ message: 'Session ended, details locked' })
+    }
+
+    if (room.phase === 'ended') {
+      return res.status(400).json({ message: 'This session has ended' })
+    }
+
+    const participantIsAdmin = participant.role === 'admin'
+    const participantIdeaCount = (room.ideas ?? []).filter((idea) => idea.authorId === participantId).length
+
+    if (!participantIsAdmin && participantIdeaCount >= 3) {
+      return res.status(400).json({ message: 'You already submitted 3 ideas' })
+    }
+
+    const idea = {
+      id: generateId(),
+      title: ideaTitle,
+      description: ideaDescription,
+      authorId: participantId,
+      authorName: participant.name,
+      createdAt: new Date(),
+      votes: [],
+      details: [],
+    }
+
+    await roomsCollection.updateOne(
+      { _id: room._id },
+      {
+        $push: { ideas: idea },
+        $set: { updatedAt: new Date() },
+      },
+    )
+
+    const updatedRoom = await roomsCollection.findOne({ _id: room._id })
+    return res.status(201).json({ room: formatRoom(updatedRoom), message: 'Idea captured' })
+  } catch (error) {
+    console.error('Error adding idea', error)
+    return res.status(500).json({ message: 'Unable to add idea' })
+  }
+})
+
+app.post('/api/rooms/:code/ideas/:ideaId/vote', async (req, res) => {
+  try {
+    const normalizedCode = normalizeCode(req.params.code)
+    const ideaId = sanitizeId(req.params.ideaId)
+    const participantId = sanitizeId(req.body?.participantId)
+
+    if (!participantId) {
+      return res.status(400).json({ message: 'Participant id is required' })
+    }
+
+    const room = await roomsCollection.findOne({ code: normalizedCode })
+    if (!room) {
+      return res.status(404).json({ message: 'Room not found' })
+    }
+
+    if (!ensureParticipant(room, participantId)) {
+      return res.status(403).json({ message: 'You are not part of this room' })
+    }
+
+    if (room.phase === 'ended') {
+      return res.status(400).json({ message: 'Voting closed' })
+    }
+
+    const idea = (room.ideas ?? []).find((entry) => entry.id === ideaId)
+    if (!idea) {
+      return res.status(404).json({ message: 'Idea not found' })
+    }
+
+    if ((idea.votes ?? []).includes(participantId)) {
+      return res.status(400).json({ message: 'You already voted on this idea' })
+    }
+
+    await roomsCollection.updateOne(
+      { _id: room._id, 'ideas.id': ideaId },
+      {
+        $push: { 'ideas.$.votes': participantId },
+        $set: { updatedAt: new Date() },
+      },
+    )
+
+    const updatedRoom = await roomsCollection.findOne({ _id: room._id })
+    return res.status(200).json({ room: formatRoom(updatedRoom), message: 'Vote recorded' })
+  } catch (error) {
+    console.error('Error voting for idea', error)
+    return res.status(500).json({ message: 'Unable to vote for idea' })
+  }
+})
+
+app.post('/api/rooms/:code/ideas/:ideaId/details', async (req, res) => {
+  try {
+    const normalizedCode = normalizeCode(req.params.code)
+    const ideaId = sanitizeId(req.params.ideaId)
+    const participantId = sanitizeId(req.body?.participantId)
+    const detailText = sanitizeText(req.body?.text, 280)
+
+    if (!participantId || !detailText) {
+      return res.status(400).json({ message: 'Participant and detail text are required' })
+    }
+
+    const room = await roomsCollection.findOne({ code: normalizedCode })
+    if (!room) {
+      return res.status(404).json({ message: 'Room not found' })
+    }
+
+    const participant = ensureParticipant(room, participantId)
+    if (!participant) {
+      return res.status(403).json({ message: 'You are not part of this room' })
+    }
+
+    const detail = {
+      id: generateId(),
+      text: detailText,
+      authorId: participantId,
+      authorName: participant.name,
+      createdAt: new Date(),
+    }
+
+    await roomsCollection.updateOne(
+      { _id: room._id, 'ideas.id': ideaId },
+      {
+        $push: { 'ideas.$.details': detail },
+        $set: { updatedAt: new Date() },
+      },
+    )
+
+    const updatedRoom = await roomsCollection.findOne({ _id: room._id })
+    return res.status(200).json({ room: formatRoom(updatedRoom), message: 'Detail added' })
+  } catch (error) {
+    console.error('Error adding idea detail', error)
+    return res.status(500).json({ message: 'Unable to add detail' })
+  }
+})
+
+app.post('/api/rooms/:code/phase', async (req, res) => {
+  try {
+    const normalizedCode = normalizeCode(req.params.code)
+    const adminId = sanitizeId(req.body?.adminId)
+    const requestedPhase = sanitizeName(req.body?.phase).toLowerCase()
+
+    if (!adminId || !PHASES.includes(requestedPhase)) {
+      return res.status(400).json({ message: 'Valid phase and admin id are required' })
+    }
+
+    const room = await roomsCollection.findOne({ code: normalizedCode })
+    if (!room) {
+      return res.status(404).json({ message: 'Room not found' })
+    }
+
+    const hostParticipant = (room.participants ?? []).find(isAdminParticipant)
+    if (hostParticipant?.id !== adminId) {
+      return res.status(403).json({ message: 'Only the host can change the phase' })
+    }
+
+    await roomsCollection.updateOne(
+      { _id: room._id },
+      {
+        $set: {
+          phase: requestedPhase,
+          phaseEndsAt: req.body?.phaseEndsAt ? new Date(req.body.phaseEndsAt) : null,
+          updatedAt: new Date(),
+        },
+      },
+    )
+
+    const updatedRoom = await roomsCollection.findOne({ _id: room._id })
+    return res.status(200).json({ room: formatRoom(updatedRoom), message: 'Phase updated' })
+  } catch (error) {
+    console.error('Error updating phase', error)
+    return res.status(500).json({ message: 'Unable to update phase' })
   }
 })
 

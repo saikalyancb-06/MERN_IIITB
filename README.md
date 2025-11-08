@@ -2,8 +2,9 @@
 
 This repo now holds the first phase of the Idea Planner: creating private rooms with shareable
 5-letter keys so collaborators can join before the ideation timers start. A lightweight Express
-API persists rooms and participants in MongoDB (so future real-time features can tap into change
-streams), while the Vite/React client walks hosts and guests through creating or entering a room.
+API persists rooms and participants in MongoDB (with change streams powering real-time updates),
+while the Vite/React client now routes participants straight into a Meet-style `/rooms/:code`
+experience once they create or join a room.
 
 ## Getting started
 
@@ -38,5 +39,9 @@ The `VITE_API_URL` variable should match the backend origin (defaults to
 
 - Create a room with host name + optional label; API returns a unique 5-letter code stored in Mongo.
 - Join an existing room by entering the code + participant name; backend de-duplicates attendees.
-- Live roster card keeps the latest room snapshot (code, host, participant list) in the UI.
-- All data flows through MongoDB so upcoming real-time phases can listen on change streams.
+- Participants are issued UUIDs so Mongo documents stay stable for change streams & admin controls.
+- After create/join, users are redirected to `/rooms/:code`, where:
+  - A MongoDB change-stream powered SSE feed keeps the roster, presence, and host actions live.
+  - Hosts can copy the room key, remove attendees, or end the room; guests auto-redirect out if
+    they are removed or when the host ends the session.
+- All traffic flows through MongoDB, so the realtime behavior is backed entirely by the data layer.
