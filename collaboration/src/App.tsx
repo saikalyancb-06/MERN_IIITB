@@ -1142,16 +1142,16 @@ function RoomScreen() {
                     </Badge>
                   )}
                   <span className="rounded-full bg-primary/20 px-3 py-1 text-xs text-primary-foreground">
-                    {phase === 'ideate' ? 'Ideating' : phase === 'ended' ? 'Voting' : 'Planning'}
+                    {phase === 'ideate' ? 'Ideating' : phase === 'planning' ? 'Planning' : 'Voting'}
                   </span>
                 </div>
               </CardTitle>
               <CardDescription>
                 {phase === 'ideate'
                   ? 'Collect raw ideas with a clear title and short description.'
-                  : phase === 'ended'
-                  ? 'Voting only – idea submission is locked.'
-                  : 'Break down the winning idea into actionable tasks.'}
+                  : phase === 'planning'
+                  ? 'Break down the winning idea into actionable tasks.'
+                  : 'Voting only – idea submission is locked.'}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6 flex-1 overflow-auto">
