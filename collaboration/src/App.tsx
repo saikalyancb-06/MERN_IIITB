@@ -356,10 +356,10 @@ function Lobby() {
                   />
                   <InputField
                     id="roomName"
-                    label="Room title"
+                    label="Room title (optional)"
                     value={formValues.roomName}
                     onChange={(event) => updateField('roomName', event.target.value)}
-                    placeholder="Lightning brainstorm"
+                    placeholder="e.g., Lightning brainstorm, Product roadmap session"
                   />
                 </>
               ) : (
@@ -460,7 +460,7 @@ function RoomScreen() {
   const isAdmin = session?.role === 'admin'
   const ideas = room?.ideas ?? []
   const phase = (room?.phase ?? 'ideate') as RoomPhase
-  const topicTitle = room?.topic?.title ?? 'Untitled ideation'
+  const topicTitle = room?.roomName || room?.topic?.title || 'Untitled ideation'
   const userIdeaCount = session ? ideas.filter((idea) => idea.authorId === session.participantId).length : 0
   const userIdeaLimitReached = !isAdmin && userIdeaCount >= 3
 
@@ -887,7 +887,7 @@ function RoomScreen() {
               <p className="text-xs uppercase tracking-[0.35em] text-muted-foreground">Room · {room?.code}</p>
               <h1 className="text-3xl font-semibold text-foreground">{topicTitle}</h1>
               <p className="text-sm text-muted-foreground">
-                {room?.roomName || 'Keep everyone focused on the same ideation board.'}
+                Keep everyone focused on the same ideation board and collaborate in real-time.
               </p>
               {isAdmin ? null : (
                 <p className="text-xs text-muted-foreground">Topic set by the host.</p>
@@ -1316,60 +1316,71 @@ function RoomScreen() {
                     </div>
                   )}
 
-                  {/* Add Action Item Form */}
-                  <div className="rounded-xl border border-white/10 bg-black/30 p-4 space-y-3">
-                    <input
-                      className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
-                      placeholder="Action item description..."
-                      value={actionDrafts[topIdea.id]?.text ?? ''}
-                      onChange={(event) =>
-                        setActionDrafts((prev) => ({
-                          ...prev,
-                          [topIdea.id]: {
-                            ...prev[topIdea.id],
-                            text: event.target.value,
-                            assignedTo: prev[topIdea.id]?.assignedTo ?? '',
-                            tags: prev[topIdea.id]?.tags ?? [],
-                          },
-                        }))
-                      }
-                    />
-                    
-                    <div className="flex flex-wrap gap-2">
-                      <select
-                        className="rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
-                        value={actionDrafts[topIdea.id]?.assignedTo ?? ''}
+                  {/* Add Action Item Form - Admin Only */}
+                  {isAdmin && (
+                    <div className="rounded-xl border border-white/10 bg-black/30 p-4 space-y-3">
+                      <input
+                        className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+                        placeholder="Action item description..."
+                        value={actionDrafts[topIdea.id]?.text ?? ''}
                         onChange={(event) =>
                           setActionDrafts((prev) => ({
                             ...prev,
                             [topIdea.id]: {
                               ...prev[topIdea.id],
-                              text: prev[topIdea.id]?.text ?? '',
-                              assignedTo: event.target.value,
+                              text: event.target.value,
+                              assignedTo: prev[topIdea.id]?.assignedTo ?? '',
                               tags: prev[topIdea.id]?.tags ?? [],
                             },
                           }))
                         }
-                      >
-                        <option value="">Assign to...</option>
-                        {participants.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name}
-                          </option>
-                        ))}
-                      </select>
+                      />
+                      
+                      <div className="flex flex-wrap gap-2">
+                        <select
+                          className="rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+                          value={actionDrafts[topIdea.id]?.assignedTo ?? ''}
+                          onChange={(event) =>
+                            setActionDrafts((prev) => ({
+                              ...prev,
+                              [topIdea.id]: {
+                                ...prev[topIdea.id],
+                                text: prev[topIdea.id]?.text ?? '',
+                                assignedTo: event.target.value,
+                                tags: prev[topIdea.id]?.tags ?? [],
+                              },
+                            }))
+                          }
+                        >
+                          <option value="">Assign to...</option>
+                          {participants.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                            </option>
+                          ))}
+                        </select>
 
-                      <Button
-                        type="button"
-                        size="sm"
-                        disabled={!actionDrafts[topIdea.id]?.text?.trim() || actionTarget === topIdea.id}
-                        onClick={() => handleAddAction(topIdea.id)}
-                      >
-                        <Plus className="h-4 w-4 mr-1" />
-                        {actionTarget === topIdea.id ? 'Adding…' : 'Add Task'}
-                      </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={!actionDrafts[topIdea.id]?.text?.trim() || actionTarget === topIdea.id}
+                          onClick={() => handleAddAction(topIdea.id)}
+                        >
+                          <Plus className="h-4 w-4 mr-1" />
+                          {actionTarget === topIdea.id ? 'Adding…' : 'Add Task'}
+                        </Button>
+                      </div>
                     </div>
-                  </div>
+                  )}
+                  
+                  {/* Message for non-admin users */}
+                  {!isAdmin && (
+                    <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+                      <p className="text-sm text-muted-foreground text-center">
+                        Only the host can assign action items. You can view the tasks assigned to you above.
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Phase Controls (Admin Only) */}

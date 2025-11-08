@@ -91,7 +91,7 @@ async function createRoomDocument({ adminName, roomName }) {
         },
       ],
       topic: {
-        title: 'Untitled ideation',
+        title: normalizedRoomName || 'Untitled ideation',
         createdAt: now,
         createdById: null,
       },
@@ -599,6 +599,11 @@ app.post('/api/rooms/:code/ideas/:ideaId/actions', async (req, res) => {
     const participant = ensureParticipant(room, participantId)
     if (!participant) {
       return res.status(403).json({ message: 'You are not part of this room' })
+    }
+
+    // Only admin can add action items
+    if (participant.role !== 'admin') {
+      return res.status(403).json({ message: 'Only the host can assign action items' })
     }
 
     const action = {
