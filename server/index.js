@@ -489,8 +489,8 @@ app.post('/api/rooms/:code/ideas/:ideaId/vote', async (req, res) => {
       return res.status(403).json({ message: 'You are not part of this room' })
     }
 
-    if (room.phase === 'ended') {
-      return res.status(400).json({ message: 'Voting closed' })
+    if (room.phase !== 'ended') {
+      return res.status(400).json({ message: 'Voting is only available after the session ends' })
     }
 
     const idea = (room.ideas ?? []).find((entry) => entry.id === ideaId)
@@ -599,6 +599,66 @@ app.post('/api/rooms/:code/phase', async (req, res) => {
   } catch (error) {
     console.error('Error updating phase', error)
     return res.status(500).json({ message: 'Unable to update phase' })
+  }
+})
+
+// Export summary endpoint
+app.get('/api/rooms/:code/export', async (req, res) => {
+  try {
+    const { code } = req.params
+    const room = await roomsCollection.findOne({ code })
+
+    if (!room) {
+      return res.status(404).json({ message: 'Room not found' })
+    }
+
+    const formattedRoom = formatRoom(room)
+    const ideas = formattedRoom.ideas || []
+    const sortedIdeas = [...ideas].sort((a, b) => b.votes.length - a.votes.length)
+
+    // Generate markdown content
+    let markdown = `# Brainstorming Session Summary\n\n`
+    markdown += `**Room Code:** ${code}\n`
+    markdown += `**Host:** ${formattedRoom.adminName}\n`
+    markdown += `**Phase:** ${formattedRoom.phase}\n`
+    markdown += `**Date:** ${new Date().toLocaleString()}\n\n`
+    markdown += `---\n\n`
+    markdown += `## Ideas (${ideas.length} total)\n\n`
+
+    sortedIdeas.forEach((idea, index) => {
+      const rank = index + 1
+      const medal = rank === 1 ? '🥇' : rank === 2 ? '🥈' : rank === 3 ? '🥉' : `${rank}.`
+      markdown += `### ${medal} ${idea.title}\n\n`
+      markdown += `**Author:** ${idea.authorName}\n`
+      markdown += `**Votes:** ${idea.votes.length}\n`
+      markdown += `**Description:** ${idea.description}\n\n`
+
+      if (idea.details && idea.details.length > 0) {
+        markdown += `**Details:**\n`
+        idea.details.forEach(detail => {
+          markdown += `- ${detail.authorName}: ${detail.text}\n`
+        })
+        markdown += `\n`
+      }
+    })
+
+    markdown += `---\n\n`
+    markdown += `## Statistics\n\n`
+    markdown += `- Total Ideas: ${ideas.length}\n`
+    markdown += `- Total Votes: ${ideas.reduce((sum, idea) => sum + idea.votes.length, 0)}\n`
+    markdown += `- Participants: ${formattedRoom.participants.length}\n`
+
+    if (sortedIdeas.length > 0 && sortedIdeas[0].votes.length > 0) {
+      markdown += `\n## Winner\n\n`
+      markdown += `🏆 **${sortedIdeas[0].title}** by ${sortedIdeas[0].authorName} (${sortedIdeas[0].votes.length} votes)\n`
+    }
+
+    res.setHeader('Content-Type', 'text/markdown')
+    res.setHeader('Content-Disposition', `attachment; filename="brainstorm-${code}-${Date.now()}.md"`)
+    res.send(markdown)
+  } catch (error) {
+    console.error('Error exporting summary', error)
+    return res.status(500).json({ message: 'Unable to export summary' })
   }
 })
 
