@@ -15,7 +15,7 @@ import {
   useMemo,
   useState,
 } from 'react'
-import { UserMinus, Clock, ShieldAlert } from 'lucide-react'
+import { UserMinus, Clock, ShieldAlert, Download, Timer } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -477,7 +477,7 @@ function RoomScreen() {
   }, [modalNotice])
 
   useEffect(() => {
-    const timer = window.setInterval(() => setCurrentTime(new Date()), 15_000)
+    const timer = window.setInterval(() => setCurrentTime(new Date()), 1000)
     return () => window.clearInterval(timer)
   }, [])
 
@@ -695,13 +695,23 @@ function RoomScreen() {
     }
   }
 
-  async function handlePhaseChange(nextPhase: RoomPhase) {
+  async function handlePhaseChange(nextPhase: RoomPhase, durationMinutes?: number) {
     if (!room || !session) return
     setPhasePending(true)
     try {
+      const payload: { adminId: string; phase: RoomPhase; phaseEndsAt?: string } = {
+        adminId: session.participantId,
+        phase: nextPhase,
+      }
+      
+      if (durationMinutes && durationMinutes > 0) {
+        const endsAt = new Date(Date.now() + durationMinutes * 60 * 1000)
+        payload.phaseEndsAt = endsAt.toISOString()
+      }
+      
       const { room: updated } = await apiRequest<ApiRoomResponse>(`/api/rooms/${room.code}/phase`, {
         method: 'POST',
-        body: JSON.stringify({ adminId: session.participantId, phase: nextPhase }),
+        body: JSON.stringify(payload),
       })
       setRoom(updated)
     } catch (error) {
@@ -712,9 +722,33 @@ function RoomScreen() {
     }
   }
 
+  async function handleExportSummary() {
+    if (!room) return
+    try {
+      window.open(`${API_BASE_URL}/api/rooms/${room.code}/export`, '_blank')
+    } catch (error) {
+      const fallback = error instanceof Error ? error.message : 'Unable to export summary'
+      setStatus({ type: 'error', message: fallback })
+    }
+  }
+
+  const timeRemaining = useMemo(() => {
+    if (!room?.phaseEndsAt) return null
+    const now = currentTime.getTime()
+    const end = new Date(room.phaseEndsAt).getTime()
+    const diff = end - now
+    
+    if (diff <= 0) return 'Time expired'
+    
+    const minutes = Math.floor(diff / 60000)
+    const seconds = Math.floor((diff % 60000) / 1000)
+    
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`
+  }, [room?.phaseEndsAt, currentTime])
+
   const stageTimeline = [
-    { label: 'Ideate', value: 'ideate', description: 'Share ideas with a title and description' },
-    { label: 'Ended', value: 'ended', description: 'Ideas locked, voting only' },
+    { label: 'Ideate', value: 'ideate', description: 'Share ideas with a title and description', defaultMinutes: 5 },
+    { label: 'Ended', value: 'ended', description: 'Ideas locked, voting only', defaultMinutes: 3 },
   ] as const
 
   const canSubmitIdea =
@@ -841,9 +875,17 @@ function RoomScreen() {
             <CardHeader>
               <CardTitle className="flex items-center justify-between text-base">
                 <span>Brainstorming console</span>
-                <span className="rounded-full bg-primary/20 px-3 py-1 text-xs text-primary-foreground">
-                  {phase === 'ideate' ? 'Ideating' : 'Session ended'}
-                </span>
+                <div className="flex items-center gap-2">
+                  {timeRemaining && (
+                    <Badge variant="outline" className="gap-1 text-xs">
+                      <Timer className="h-3 w-3" />
+                      {timeRemaining}
+                    </Badge>
+                  )}
+                  <span className="rounded-full bg-primary/20 px-3 py-1 text-xs text-primary-foreground">
+                    {phase === 'ideate' ? 'Ideating' : 'Session ended'}
+                  </span>
+                </div>
               </CardTitle>
               <CardDescription>
                 {phase === 'ideate'
@@ -890,16 +932,17 @@ function RoomScreen() {
                     </Button>
                     {isAdmin && (
                       <div className="flex flex-wrap gap-2">
-                        {stageTimeline.map(({ value, label }) => (
+                        {stageTimeline.map(({ value, label, defaultMinutes }) => (
                         <Button
                           key={value}
                           type="button"
                           variant={phase === value ? 'default' : 'outline'}
                           size="sm"
-                          onClick={() => handlePhaseChange(value)}
+                          onClick={() => handlePhaseChange(value, defaultMinutes)}
                           disabled={phasePending}
+                          className="gap-1"
                         >
-                          {label}
+                          {label} ({defaultMinutes}m)
                         </Button>
                       ))}
                     </div>
@@ -1053,7 +1096,17 @@ function RoomScreen() {
               )}
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              {/* Control toolbar icons removed */}
+              {ideas.length > 0 && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="gap-2"
+                  onClick={handleExportSummary}
+                >
+                  <Download className="h-4 w-4" />
+                  Export Summary
+                </Button>
+              )}
               {isAdmin && (
                 <Button
                   type="button"
