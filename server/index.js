@@ -18,7 +18,7 @@ let client
 let roomsCollection
 
 const LETTERS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-const PHASES = ['ideate', 'ended']
+const PHASES = ['ideate', 'ended', 'planning']
 
 function generateRoomCode(length = 5) {
   let code = ''
@@ -452,6 +452,7 @@ app.post('/api/rooms/:code/ideas', async (req, res) => {
       createdAt: new Date(),
       votes: [],
       details: [],
+      actions: [],
     }
 
     await roomsCollection.updateOne(
@@ -560,6 +561,113 @@ app.post('/api/rooms/:code/ideas/:ideaId/details', async (req, res) => {
   } catch (error) {
     console.error('Error adding idea detail', error)
     return res.status(500).json({ message: 'Unable to add detail' })
+  }
+})
+
+// Add action item to idea (for planning phase)
+app.post('/api/rooms/:code/ideas/:ideaId/actions', async (req, res) => {
+  try {
+    const normalizedCode = normalizeCode(req.params.code)
+    const ideaId = sanitizeId(req.params.ideaId)
+    const participantId = sanitizeId(req.body?.participantId)
+    const actionText = sanitizeText(req.body?.text, 280)
+    const assignedTo = sanitizeId(req.body?.assignedTo)
+    const tags = Array.isArray(req.body?.tags) ? req.body.tags.slice(0, 3) : []
+
+    if (!participantId || !actionText) {
+      return res.status(400).json({ message: 'Participant and action text are required' })
+    }
+
+    const room = await roomsCollection.findOne({ code: normalizedCode })
+    if (!room) {
+      return res.status(404).json({ message: 'Room not found' })
+    }
+
+    const participant = ensureParticipant(room, participantId)
+    if (!participant) {
+      return res.status(403).json({ message: 'You are not part of this room' })
+    }
+
+    const action = {
+      id: generateId(),
+      text: actionText,
+      completed: false,
+      assignedTo: assignedTo || null,
+      assignedToName: assignedTo ? ensureParticipant(room, assignedTo)?.name || 'Unknown' : null,
+      tags: tags.map(t => sanitizeText(t, 20)),
+      createdBy: participantId,
+      createdByName: participant.name,
+      createdAt: new Date(),
+    }
+
+    await roomsCollection.updateOne(
+      { _id: room._id, 'ideas.id': ideaId },
+      {
+        $push: { 'ideas.$.actions': action },
+        $set: { updatedAt: new Date() },
+      },
+    )
+
+    const updatedRoom = await roomsCollection.findOne({ _id: room._id })
+    return res.status(200).json({ room: formatRoom(updatedRoom), message: 'Action item added' })
+  } catch (error) {
+    console.error('Error adding action item', error)
+    return res.status(500).json({ message: 'Unable to add action item' })
+  }
+})
+
+// Toggle action item completion
+app.patch('/api/rooms/:code/ideas/:ideaId/actions/:actionId', async (req, res) => {
+  try {
+    const normalizedCode = normalizeCode(req.params.code)
+    const ideaId = sanitizeId(req.params.ideaId)
+    const actionId = sanitizeId(req.params.actionId)
+    const participantId = sanitizeId(req.body?.participantId)
+
+    if (!participantId) {
+      return res.status(400).json({ message: 'Participant ID is required' })
+    }
+
+    const room = await roomsCollection.findOne({ code: normalizedCode })
+    if (!room) {
+      return res.status(404).json({ message: 'Room not found' })
+    }
+
+    if (!ensureParticipant(room, participantId)) {
+      return res.status(403).json({ message: 'You are not part of this room' })
+    }
+
+    const idea = room.ideas?.find(i => i.id === ideaId)
+    if (!idea) {
+      return res.status(404).json({ message: 'Idea not found' })
+    }
+
+    const action = idea.actions?.find(a => a.id === actionId)
+    if (!action) {
+      return res.status(404).json({ message: 'Action item not found' })
+    }
+
+    await roomsCollection.updateOne(
+      { _id: room._id, 'ideas.id': ideaId, 'ideas.actions.id': actionId },
+      {
+        $set: { 
+          'ideas.$[idea].actions.$[action].completed': !action.completed,
+          updatedAt: new Date() 
+        },
+      },
+      {
+        arrayFilters: [
+          { 'idea.id': ideaId },
+          { 'action.id': actionId }
+        ]
+      }
+    )
+
+    const updatedRoom = await roomsCollection.findOne({ _id: room._id })
+    return res.status(200).json({ room: formatRoom(updatedRoom), message: 'Action item updated' })
+  } catch (error) {
+    console.error('Error toggling action item', error)
+    return res.status(500).json({ message: 'Unable to update action item' })
   }
 })
 

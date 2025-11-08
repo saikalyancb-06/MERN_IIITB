@@ -15,7 +15,7 @@ import {
   useMemo,
   useState,
 } from 'react'
-import { UserMinus, Clock, ShieldAlert, Download, Timer, Trophy, TrendingUp, CheckCircle2 } from 'lucide-react'
+import { UserMinus, Clock, ShieldAlert, Download, Timer, Trophy, TrendingUp, CheckCircle2, ListTodo, Target, Users, Tag, Plus } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -46,7 +46,7 @@ type Participant = {
   joinedAt: string
 }
 
-type RoomPhase = 'ideate' | 'ended'
+type RoomPhase = 'ideate' | 'ended' | 'planning'
 
 type Topic = {
   title: string
@@ -62,6 +62,18 @@ type IdeaDetail = {
   createdAt: string
 }
 
+type ActionItem = {
+  id: string
+  text: string
+  completed: boolean
+  assignedTo: string | null
+  assignedToName: string | null
+  tags: string[]
+  createdBy: string
+  createdByName: string
+  createdAt: string
+}
+
 type BrainstormIdea = {
   id: string
   title: string
@@ -71,6 +83,7 @@ type BrainstormIdea = {
   createdAt: string
   votes: string[]
   details: IdeaDetail[]
+  actions: ActionItem[]
 }
 
 type Room = {
@@ -434,10 +447,12 @@ function RoomScreen() {
   const [currentTime, setCurrentTime] = useState(() => new Date())
   const [ideaInputs, setIdeaInputs] = useState({ title: '', description: '' })
   const [detailDrafts, setDetailDrafts] = useState<Record<string, string>>({})
+  const [actionDrafts, setActionDrafts] = useState<Record<string, { text: string; assignedTo: string; tags: string[] }>>({})
   const [ideaPending, setIdeaPending] = useState(false)
   const [phasePending, setPhasePending] = useState(false)
   const [voteTarget, setVoteTarget] = useState<string | null>(null)
   const [detailTarget, setDetailTarget] = useState<string | null>(null)
+  const [actionTarget, setActionTarget] = useState<string | null>(null)
 
   const invalidSession = !session || session.roomCode !== normalizedCode
   const participants = room?.participants ?? []
@@ -727,6 +742,48 @@ function RoomScreen() {
     }
   }
 
+  async function handleAddAction(ideaId: string) {
+    if (!room || !session) return
+    const draft = actionDrafts[ideaId]
+    if (!draft?.text?.trim()) return
+    setActionTarget(ideaId)
+    try {
+      const { room: updated } = await apiRequest<ApiRoomResponse>(`/api/rooms/${room.code}/ideas/${ideaId}/actions`, {
+        method: 'POST',
+        body: JSON.stringify({ 
+          participantId: session.participantId, 
+          text: draft.text,
+          assignedTo: draft.assignedTo || null,
+          tags: draft.tags.filter(t => t.trim())
+        }),
+      })
+      setActionDrafts((prev) => ({ ...prev, [ideaId]: { text: '', assignedTo: '', tags: [] } }))
+      setRoom(updated)
+    } catch (error) {
+      const fallback = error instanceof Error ? error.message : 'Unable to add action item'
+      setStatus({ type: 'error', message: fallback })
+    } finally {
+      setActionTarget(null)
+    }
+  }
+
+  async function handleToggleAction(ideaId: string, actionId: string) {
+    if (!room || !session) return
+    try {
+      const { room: updated } = await apiRequest<ApiRoomResponse>(
+        `/api/rooms/${room.code}/ideas/${ideaId}/actions/${actionId}`,
+        {
+          method: 'PATCH',
+          body: JSON.stringify({ participantId: session.participantId }),
+        }
+      )
+      setRoom(updated)
+    } catch (error) {
+      const fallback = error instanceof Error ? error.message : 'Unable to toggle action item'
+      setStatus({ type: 'error', message: fallback })
+    }
+  }
+
   async function handlePhaseChange(nextPhase: RoomPhase, durationMinutes?: number) {
     if (!room || !session) return
     setPhasePending(true)
@@ -780,7 +837,8 @@ function RoomScreen() {
 
   const stageTimeline = [
     { label: 'Ideate', value: 'ideate', description: 'Share ideas with a title and description', defaultMinutes: 5 },
-    { label: 'Ended', value: 'ended', description: 'Ideas locked, voting only', defaultMinutes: 3 },
+    { label: 'Vote', value: 'ended', description: 'Ideas locked, voting only', defaultMinutes: 3 },
+    { label: 'Plan', value: 'planning', description: 'Break down winner into action items', defaultMinutes: 10 },
   ] as const
 
   const canSubmitIdea =
@@ -1084,14 +1142,16 @@ function RoomScreen() {
                     </Badge>
                   )}
                   <span className="rounded-full bg-primary/20 px-3 py-1 text-xs text-primary-foreground">
-                    {phase === 'ideate' ? 'Ideating' : 'Session ended'}
+                    {phase === 'ideate' ? 'Ideating' : phase === 'ended' ? 'Voting' : 'Planning'}
                   </span>
                 </div>
               </CardTitle>
               <CardDescription>
                 {phase === 'ideate'
                   ? 'Collect raw ideas with a clear title and short description.'
-                  : 'Voting only – idea submission is locked.'}
+                  : phase === 'ended'
+                  ? 'Voting only – idea submission is locked.'
+                  : 'Break down the winning idea into actionable tasks.'}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6 flex-1 overflow-auto">
@@ -1232,6 +1292,188 @@ function RoomScreen() {
               </CardContent>
             </Card>
           </div>
+
+          {/* Planning Phase - Action Plan for Winner */}
+          {phase === 'planning' && topIdea && (
+            <Card className="rounded-[32px] border-white/10 bg-black/40 backdrop-blur">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <Target className="h-5 w-5 text-primary" />
+                      Action Plan: {topIdea.title}
+                    </CardTitle>
+                    <CardDescription>Break down the winning idea into actionable tasks</CardDescription>
+                  </div>
+                  <Badge variant="secondary" className="gap-1">
+                    <Trophy className="h-3 w-3 text-yellow-500" />
+                    Winner ({topIdea.votes.length} votes)
+                  </Badge>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* Idea Summary */}
+                <div className="rounded-2xl border border-primary/20 bg-primary/5 p-4">
+                  <h4 className="mb-2 font-semibold text-foreground">Summary</h4>
+                  <p className="text-sm text-muted-foreground">{topIdea.description}</p>
+                  {topIdea.details.length > 0 && (
+                    <div className="mt-3 space-y-1">
+                      {topIdea.details.map((detail) => (
+                        <p key={detail.id} className="text-xs text-muted-foreground">
+                          <span className="font-medium text-foreground">{detail.authorName}:</span> {detail.text}
+                        </p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Action Items */}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="flex items-center gap-2 font-semibold text-foreground">
+                      <ListTodo className="h-4 w-4" />
+                      Action Items ({topIdea.actions?.length || 0})
+                    </h4>
+                  </div>
+
+                  {topIdea.actions && topIdea.actions.length > 0 && (
+                    <div className="space-y-2">
+                      {topIdea.actions.map((action) => (
+                        <div
+                          key={action.id}
+                          className={cn(
+                            'group rounded-xl border border-white/10 bg-white/5 p-3 transition-all',
+                            action.completed && 'opacity-60'
+                          )}
+                        >
+                          <div className="flex items-start gap-3">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleAction(topIdea.id, action.id)}
+                              className={cn(
+                                'mt-0.5 h-5 w-5 rounded border-2 transition-all flex items-center justify-center',
+                                action.completed
+                                  ? 'border-emerald-500 bg-emerald-500'
+                                  : 'border-muted-foreground hover:border-primary'
+                              )}
+                            >
+                              {action.completed && <CheckCircle2 className="h-3 w-3 text-white" />}
+                            </button>
+                            
+                            <div className="flex-1 space-y-1">
+                              <p className={cn(
+                                'text-sm text-foreground',
+                                action.completed && 'line-through'
+                              )}>
+                                {action.text}
+                              </p>
+                              
+                              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                <span>by {action.createdByName}</span>
+                                {action.assignedToName && (
+                                  <Badge variant="outline" className="gap-1 text-xs">
+                                    <Users className="h-3 w-3" />
+                                    {action.assignedToName}
+                                  </Badge>
+                                )}
+                                {action.tags && action.tags.length > 0 && (
+                                  <div className="flex gap-1">
+                                    {action.tags.map((tag, i) => (
+                                      <Badge key={i} variant="secondary" className="gap-1 text-xs">
+                                        <Tag className="h-2 w-2" />
+                                        {tag}
+                                      </Badge>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Add Action Item Form */}
+                  <div className="rounded-xl border border-white/10 bg-black/30 p-4 space-y-3">
+                    <input
+                      className="w-full rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+                      placeholder="Action item description..."
+                      value={actionDrafts[topIdea.id]?.text ?? ''}
+                      onChange={(event) =>
+                        setActionDrafts((prev) => ({
+                          ...prev,
+                          [topIdea.id]: {
+                            ...prev[topIdea.id],
+                            text: event.target.value,
+                            assignedTo: prev[topIdea.id]?.assignedTo ?? '',
+                            tags: prev[topIdea.id]?.tags ?? [],
+                          },
+                        }))
+                      }
+                    />
+                    
+                    <div className="flex flex-wrap gap-2">
+                      <select
+                        className="rounded-xl border border-white/10 bg-black/40 px-3 py-2 text-sm text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
+                        value={actionDrafts[topIdea.id]?.assignedTo ?? ''}
+                        onChange={(event) =>
+                          setActionDrafts((prev) => ({
+                            ...prev,
+                            [topIdea.id]: {
+                              ...prev[topIdea.id],
+                              text: prev[topIdea.id]?.text ?? '',
+                              assignedTo: event.target.value,
+                              tags: prev[topIdea.id]?.tags ?? [],
+                            },
+                          }))
+                        }
+                      >
+                        <option value="">Assign to...</option>
+                        {participants.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name}
+                          </option>
+                        ))}
+                      </select>
+
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={!actionDrafts[topIdea.id]?.text?.trim() || actionTarget === topIdea.id}
+                        onClick={() => handleAddAction(topIdea.id)}
+                      >
+                        <Plus className="h-4 w-4 mr-1" />
+                        {actionTarget === topIdea.id ? 'Adding…' : 'Add Task'}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Statistics */}
+                <div className="grid grid-cols-3 gap-4 rounded-xl border border-white/10 bg-black/30 p-4">
+                  <div className="text-center">
+                    <p className="text-2xl font-bold text-foreground">
+                      {topIdea.actions?.length || 0}
+                    </p>
+                    <p className="text-xs text-muted-foreground">Total Tasks</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-2xl font-bold text-emerald-400">
+                      {topIdea.actions?.filter(a => a.completed).length || 0}
+                    </p>
+                    <p className="text-xs text-muted-foreground">Completed</p>
+                  </div>
+                  <div className="text-center">
+                    <p className="text-2xl font-bold text-primary">
+                      {topIdea.actions?.filter(a => !a.completed).length || 0}
+                    </p>
+                    <p className="text-xs text-muted-foreground">Remaining</p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           </div>
 
